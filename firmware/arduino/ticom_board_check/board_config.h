@@ -31,6 +31,8 @@ constexpr int MODEM_PWRKEY = 32;
 constexpr bool MODEM_ENABLED = false;
 
 constexpr uint32_t SERIAL_BAUD = 115200;
-constexpr uint8_t RGB_BRIGHTNESS = 32;
+
+// Do not use the name RGB_BRIGHTNESS here: Arduino-ESP32 3.x defines it as a macro.
+constexpr uint8_t RGB_LED_BRIGHTNESS = 32;
 
 }  // namespace board
