@@ -31,6 +31,6 @@ constexpr int MODEM_PWRKEY = 32;
 constexpr bool MODEM_ENABLED = false;
 
 constexpr uint32_t SERIAL_BAUD = 115200;
-constexpr uint8_t RGB_BRIGHTNESS = 32;
+constexpr uint8_t RGB_LED_BRIGHTNESS = 32;
 
 }  // namespace board

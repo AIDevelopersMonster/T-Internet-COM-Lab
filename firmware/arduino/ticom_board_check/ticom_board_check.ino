@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_arduino_version.h>
+#include <Network.h>
 #include <ETH.h>
 #include <FS.h>
 #include <SD.h>
@@ -199,7 +200,7 @@ void readSerialCommands() {
 
 void initRgb() {
   rgb.begin();
-  rgb.setBrightness(board::RGB_BRIGHTNESS);
+  rgb.setBrightness(board::RGB_LED_BRIGHTNESS);
   setRgb(0, 0, 16);
 }
 
@@ -294,15 +295,15 @@ void onNetworkEvent(system_event_id_t event) {
 #endif
 
 void initEthernet() {
-  WiFi.onEvent(onNetworkEvent);
+  Network.onEvent(onNetworkEvent);
   resetEthernetPhy();
 
   const bool beginResult = ETH.begin(
+      board::ETH_PHY_TYPE,
       board::ETH_PHY_ADDR,
-      board::ETH_POWER_PIN,
       board::ETH_MDC_PIN,
       board::ETH_MDIO_PIN,
-      board::ETH_PHY_TYPE,
+      board::ETH_POWER_PIN,
       board::ETH_CLK_MODE);
 
   if (!beginResult) {
