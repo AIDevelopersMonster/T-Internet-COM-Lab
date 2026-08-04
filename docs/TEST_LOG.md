@@ -78,3 +78,59 @@ Commands:
 - test every RGB command;
 - test `STATUS`, `INFO`, `ETH`, `SD` and `REBOOT`;
 - add modem tests after compatible Mini PCIe modules arrive.
+
+## 2026-08-04 — Bluetooth Classic and BLE check
+
+### Hardware and software
+
+- LILYGO T-Internet-COM ESP32;
+- Arduino-ESP32 3.3.11;
+- Bluetooth diagnostic sketch `ticom_bluetooth_check`;
+- Windows PC used as the Bluetooth Classic SPP client.
+
+### Identifiers
+
+- Bluetooth device name: `TICOM-EBF2`;
+- Bluetooth MAC: `B0:B2:1C:31:EB:F2`;
+- Windows outgoing SPP port: `COM18`, service `ESP32SPP`.
+
+### Confirmed results
+
+- Bluetooth Classic SPP starts successfully;
+- Windows discovers and pairs with `TICOM-EBF2`;
+- the SPP server reports the connected client MAC;
+- bidirectional data transfer works through the same outgoing COM port;
+- data sent from the PC reaches the ESP32 and is echoed back;
+- command `BT SEND <TEXT>` sends data from the ESP32 to the Windows terminal;
+- connection and disconnection events are reported;
+- BLE initializes successfully;
+- five-second BLE scan completes successfully and lists detected devices with address and RSSI;
+- Classic SPP can be stopped before BLE scanning and the BLE stack can then be stopped cleanly.
+
+### Observed memory
+
+```text
+Free heap before Classic SPP: 217716 bytes
+Free heap with Classic SPP started: 122560 bytes
+```
+
+Bluetooth Classic therefore consumes approximately 95 KB of additional internal heap in this test configuration. The Bluetooth test remains a separate sketch until simultaneous operation with Ethernet, Wi-Fi and microSD is deliberately integrated and tested.
+
+### Representative output
+
+```text
+BT CLASSIC START: PASS
+Pair with: TICOM-EBF2
+SPP event: stack initialized
+SPP event: server listening
+SPP event: client connected from B0:DC:EF:64:FD:29
+BT SEND: PASS
+
+BLE SCAN: 1 device(s) found
+BLE stopped.
+BLE SCAN: PASS
+```
+
+### Result
+
+Bluetooth Classic SPP and BLE scanning are hardware-validated on the real T-Internet-COM board.
