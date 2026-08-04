@@ -2,6 +2,7 @@
 #include <esp_arduino_version.h>
 #include <esp_system.h>
 #include <esp_mac.h>
+#include <esp_gap_ble_api.h>
 #include <Network.h>
 #include <WiFi.h>
 #include <ETH.h>
@@ -9,9 +10,6 @@
 #include <SD.h>
 #include <SPI.h>
 #include <BluetoothSerial.h>
-#include <BLEDevice.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
 #include <Adafruit_NeoPixel.h>
 
 #include "board_config.h"
@@ -40,11 +38,29 @@ bool sdMounted = false;
 
 bool classicStarted = false;
 bool classicClientConnected = false;
-bool bleInitialized = false;
+bool bleScanActive = false;
+bool bleTemporaryStack = false;
 uint32_t classicConnectCount = 0;
 uint32_t classicDisconnectCount = 0;
 
 String inputLine;
+
+constexpr size_t BLE_MAX_RESULTS = 24;
+constexpr size_t BLE_NAME_LENGTH = 32;
+
+struct BleScanEntry {
+  uint8_t address[ESP_BD_ADDR_LEN];
+  int rssi;
+  bool connectable;
+  char name[BLE_NAME_LENGTH];
+};
+
+BleScanEntry bleResults[BLE_MAX_RESULTS] = {};
+volatile size_t bleResultCount = 0;
+volatile bool bleScanDone = false;
+volatile bool bleScanFailed = false;
+
+esp_ble_scan_params_t bleScanParams = {};
 
 void setRgb(uint8_t red, uint8_t green, uint8_t blue) {
   rgb.setPixelColor(0, rgb.Color(red, green, blue));
@@ -399,10 +415,16 @@ void testSdReadWrite() {
 }
 
 void onBluetoothAuthComplete(bool success) {
-  Serial.printf("Bluetooth pairing: %s\n", success ? "PASS" : "FAIL");
+  if (!bleTemporaryStack) {
+    Serial.printf("Bluetooth pairing: %s\n", success ? "PASS" : "FAIL");
+  }
 }
 
 void onSppEvent(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
+  if (bleTemporaryStack) {
+    return;
+  }
+
   switch (event) {
     case ESP_SPP_INIT_EVT:
       Serial.println(F("SPP event: stack initialized"));
@@ -464,25 +486,30 @@ void printBluetoothStatus() {
                 static_cast<unsigned long>(classicConnectCount));
   Serial.printf("SPP disconnections since start: %lu\n",
                 static_cast<unsigned long>(classicDisconnectCount));
-  Serial.printf("BLE stack: %s\n",
-                bleInitialized ? "initialized" : "stopped");
+  Serial.printf("BLE scan: %s\n", bleScanActive ? "active" : "idle");
   Serial.printf("Free heap: %u bytes\n", ESP.getFreeHeap());
   printDivider();
 }
 
-void stopBle() {
-  if (!bleInitialized) {
+void stopBleScan() {
+  if (!bleScanActive) {
     return;
   }
 
-  BLEDevice::deinit(false);
-  bleInitialized = false;
-  Serial.println(F("BLE stopped."));
+  esp_ble_gap_stop_scanning();
+  bleScanActive = false;
+  bleScanDone = true;
+  Serial.println(F("BLE scan stopped."));
 }
 
 void stopClassic() {
   if (!classicStarted) {
     return;
+  }
+
+  if (bleScanActive) {
+    stopBleScan();
+    delay(100);
   }
 
   SerialBT.end();
@@ -491,34 +518,46 @@ void stopClassic() {
   Serial.println(F("Bluetooth Classic SPP stopped."));
 }
 
+bool startClassicInternal(bool temporaryForBle) {
+  if (classicStarted) {
+    return true;
+  }
+
+  const String name = bluetoothDeviceName();
+  bleTemporaryStack = temporaryForBle;
+
+  SerialBT.enableSSP(false, false);
+  SerialBT.onAuthComplete(onBluetoothAuthComplete);
+  SerialBT.register_callback(onSppEvent);
+
+  // Keep BLE enabled in the shared BTDM controller. The third argument must
+  // remain false so the low-level BLE GAP scanner can use the same stack.
+  if (!SerialBT.begin(name, false, false)) {
+    bleTemporaryStack = false;
+    return false;
+  }
+
+  classicStarted = true;
+  classicClientConnected = false;
+  return true;
+}
+
 void startClassic() {
   if (classicStarted) {
     Serial.println(F("Bluetooth Classic SPP is already started."));
     return;
   }
 
-  if (bleInitialized) {
-    stopBle();
-    delay(250);
-  }
-
-  const String name = bluetoothDeviceName();
   const uint32_t heapBefore = ESP.getFreeHeap();
   Serial.println(F("Starting Bluetooth Classic SPP..."));
 
-  SerialBT.enableSSP(false, false);
-  SerialBT.onAuthComplete(onBluetoothAuthComplete);
-  SerialBT.register_callback(onSppEvent);
-
-  if (!SerialBT.begin(name)) {
+  if (!startClassicInternal(false)) {
     Serial.println(F("BT CLASSIC START: FAIL"));
     return;
   }
 
-  classicStarted = true;
-  classicClientConnected = false;
   Serial.println(F("BT CLASSIC START: PASS"));
-  Serial.printf("Pair with: %s\n", name.c_str());
+  Serial.printf("Pair with: %s\n", bluetoothDeviceName().c_str());
   Serial.printf("Free heap: %u -> %u bytes\n",
                 heapBefore, ESP.getFreeHeap());
   Serial.println(F("Windows: open the outgoing ESP32SPP COM port."));
@@ -526,7 +565,7 @@ void startClassic() {
 }
 
 void sendClassicText(const String &text) {
-  if (!classicStarted) {
+  if (!classicStarted || bleTemporaryStack) {
     Serial.println(F("BT SEND: FAIL, start Classic SPP first."));
     return;
   }
@@ -541,6 +580,126 @@ void sendClassicText(const String &text) {
                 static_cast<unsigned>(text.length()));
 }
 
+int findBleResult(const uint8_t address[ESP_BD_ADDR_LEN]) {
+  const size_t count = bleResultCount;
+  for (size_t index = 0; index < count; ++index) {
+    if (memcmp(bleResults[index].address, address, ESP_BD_ADDR_LEN) == 0) {
+      return static_cast<int>(index);
+    }
+  }
+  return -1;
+}
+
+void copyBleName(esp_ble_gap_cb_param_t &callbackParam,
+                 char output[BLE_NAME_LENGTH]) {
+  auto &scan = callbackParam.scan_rst;
+  output[0] = '\0';
+  uint8_t nameLength = 0;
+  const uint8_t totalLength = scan.adv_data_len + scan.scan_rsp_len;
+  uint8_t *name = esp_ble_resolve_adv_data_by_type(
+      scan.ble_adv,
+      totalLength,
+      ESP_BLE_AD_TYPE_NAME_CMPL,
+      &nameLength);
+
+  if (name == nullptr) {
+    name = esp_ble_resolve_adv_data_by_type(
+        scan.ble_adv,
+        totalLength,
+        ESP_BLE_AD_TYPE_NAME_SHORT,
+        &nameLength);
+  }
+
+  if (name == nullptr || nameLength == 0) {
+    return;
+  }
+
+  const size_t copyLength =
+      nameLength < BLE_NAME_LENGTH - 1 ? nameLength : BLE_NAME_LENGTH - 1;
+  memcpy(output, name, copyLength);
+  output[copyLength] = '\0';
+}
+
+void storeBleResult(esp_ble_gap_cb_param_t &callbackParam) {
+  auto &scan = callbackParam.scan_rst;
+  int resultIndex = findBleResult(scan.bda);
+  if (resultIndex < 0) {
+    if (bleResultCount >= BLE_MAX_RESULTS) {
+      return;
+    }
+    resultIndex = static_cast<int>(bleResultCount++);
+    memcpy(bleResults[resultIndex].address, scan.bda, ESP_BD_ADDR_LEN);
+    bleResults[resultIndex].name[0] = '\0';
+    bleResults[resultIndex].connectable = false;
+  }
+
+  BleScanEntry &entry = bleResults[resultIndex];
+  entry.rssi = scan.rssi;
+  if (scan.ble_evt_type == ESP_BLE_EVT_CONN_ADV ||
+      scan.ble_evt_type == ESP_BLE_EVT_CONN_DIR_ADV) {
+    entry.connectable = true;
+  }
+
+  char detectedName[BLE_NAME_LENGTH];
+  copyBleName(callbackParam, detectedName);
+  if (detectedName[0] != '\0') {
+    strncpy(entry.name, detectedName, BLE_NAME_LENGTH - 1);
+    entry.name[BLE_NAME_LENGTH - 1] = '\0';
+  }
+}
+
+void onBleGapEvent(esp_gap_ble_cb_event_t event,
+                   esp_ble_gap_cb_param_t *param) {
+  if (param == nullptr) {
+    return;
+  }
+
+  switch (event) {
+    case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT:
+      if (param->scan_param_cmpl.status != ESP_BT_STATUS_SUCCESS ||
+          esp_ble_gap_start_scanning(board::BLE_SCAN_SECONDS) != ESP_OK) {
+        bleScanFailed = true;
+        bleScanDone = true;
+      }
+      break;
+
+    case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
+      if (param->scan_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+        bleScanFailed = true;
+        bleScanDone = true;
+      }
+      break;
+
+    case ESP_GAP_BLE_SCAN_RESULT_EVT:
+      if (param->scan_rst.search_evt == ESP_GAP_SEARCH_INQ_RES_EVT) {
+        storeBleResult(*param);
+      } else if (param->scan_rst.search_evt == ESP_GAP_SEARCH_INQ_CMPL_EVT) {
+        bleScanDone = true;
+      }
+      break;
+
+    case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
+      if (param->scan_stop_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+        bleScanFailed = true;
+      }
+      bleScanDone = true;
+      break;
+
+    default:
+      break;
+  }
+}
+
+void configureBleScanParams() {
+  bleScanParams = {};
+  bleScanParams.scan_type = BLE_SCAN_TYPE_ACTIVE;
+  bleScanParams.own_addr_type = BLE_ADDR_TYPE_PUBLIC;
+  bleScanParams.scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL;
+  bleScanParams.scan_interval = 0x50;
+  bleScanParams.scan_window = 0x30;
+  bleScanParams.scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE;
+}
+
 void scanBle() {
   if (classicStarted) {
     Serial.println(F("Stopping Bluetooth Classic before BLE scan..."));
@@ -548,64 +707,74 @@ void scanBle() {
     delay(250);
   }
 
-  if (!bleInitialized) {
-    Serial.println(F("Initializing BLE..."));
-    if (!BLEDevice::init("")) {
-      Serial.println(F("BLE SCAN: FAIL, initialization error."));
-      return;
-    }
-    bleInitialized = true;
-  }
-
-  BLEScan *scanner = BLEDevice::getScan();
-  if (scanner == nullptr) {
-    Serial.println(F("BLE SCAN: FAIL, scanner unavailable."));
-    stopBle();
+  Serial.println(F("Initializing shared Bluetooth stack for BLE scan..."));
+  if (!startClassicInternal(true)) {
+    Serial.println(F("BLE SCAN: FAIL, Bluetooth stack initialization error."));
     return;
   }
 
-  scanner->setActiveScan(true);
-  scanner->setInterval(100);
-  scanner->setWindow(99);
+  bleResultCount = 0;
+  memset(bleResults, 0, sizeof(bleResults));
+  bleScanDone = false;
+  bleScanFailed = false;
+  bleScanActive = true;
+  configureBleScanParams();
+
+  if (esp_ble_gap_register_callback(onBleGapEvent) != ESP_OK) {
+    Serial.println(F("BLE SCAN: FAIL, cannot register GAP callback."));
+    bleScanActive = false;
+    stopClassic();
+    bleTemporaryStack = false;
+    return;
+  }
 
   Serial.printf("Scanning BLE devices for %u seconds...\n",
                 board::BLE_SCAN_SECONDS);
-  BLEScanResults *results =
-      scanner->start(board::BLE_SCAN_SECONDS, false);
 
-  if (results == nullptr) {
-    Serial.println(F("BLE SCAN: FAIL, no result object."));
-    scanner->clearResults();
-    stopBle();
+  if (esp_ble_gap_set_scan_params(&bleScanParams) != ESP_OK) {
+    Serial.println(F("BLE SCAN: FAIL, cannot set scan parameters."));
+    bleScanActive = false;
+    stopClassic();
+    bleTemporaryStack = false;
     return;
   }
 
-  const int count = results->getCount();
-  Serial.printf("BLE SCAN: %d device(s) found\n", count);
-
-  for (int index = 0; index < count; ++index) {
-    BLEAdvertisedDevice device = results->getDevice(index);
-    const String name =
-        device.haveName() ? device.getName() : String("<unnamed>");
-    const String address = device.getAddress().toString();
-    const int rssi = device.haveRSSI() ? device.getRSSI() : 0;
-
-    Serial.printf("%2d. %s | %s | RSSI %d dBm | %s\n",
-                  index + 1,
-                  name.c_str(),
-                  address.c_str(),
-                  rssi,
-                  device.isConnectable() ? "connectable" : "not connectable");
+  const uint32_t timeoutMs = board::BLE_SCAN_SECONDS * 1000UL + 5000UL;
+  const uint32_t startedAt = millis();
+  while (!bleScanDone && millis() - startedAt < timeoutMs) {
+    delay(20);
   }
 
-  scanner->clearResults();
-  stopBle();
-  Serial.println(F("BLE SCAN: PASS"));
+  if (!bleScanDone) {
+    bleScanFailed = true;
+    esp_ble_gap_stop_scanning();
+    delay(100);
+  }
+
+  bleScanActive = false;
+  const size_t count = bleResultCount;
+  Serial.printf("BLE SCAN: %u device(s) found\n",
+                static_cast<unsigned>(count));
+
+  for (size_t index = 0; index < count; ++index) {
+    const BleScanEntry &entry = bleResults[index];
+    Serial.printf("%2u. %s | %s | RSSI %d dBm | %s\n",
+                  static_cast<unsigned>(index + 1),
+                  entry.name[0] != '\0' ? entry.name : "<unnamed>",
+                  formatMac(entry.address).c_str(),
+                  entry.rssi,
+                  entry.connectable ? "connectable" : "not connectable");
+  }
+
+  stopClassic();
+  bleTemporaryStack = false;
+  Serial.println(bleScanFailed ? F("BLE SCAN: FAIL") : F("BLE SCAN: PASS"));
 }
 
 void stopAllBluetooth() {
+  stopBleScan();
   stopClassic();
-  stopBle();
+  bleTemporaryStack = false;
   Serial.println(F("Bluetooth disabled."));
 }
 
@@ -766,7 +935,7 @@ void readSerialCommands() {
 }
 
 void serviceClassicTerminal() {
-  if (!classicStarted) {
+  if (!classicStarted || bleTemporaryStack) {
     return;
   }
 
