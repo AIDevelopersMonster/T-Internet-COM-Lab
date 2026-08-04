@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0 - 2026-08-04
+
+- added `WIFI STATUS`;
+- added `WIFI SCAN`;
+- added `WIFI CONNECT <SSID>|<PASSWORD>`;
+- added `WIFI OFF`;
+- added `SD TEST` with file creation, write, reopen, verification and deletion;
+- increased the Serial command length for Wi-Fi credentials;
+- added `ARDUINO_EVENT_ETH_LOST_IP` handling;
+- updated README with confirmed Ethernet and microSD results.
+
 ## 0.1.1 - 2026-08-03
 
 - confirmed successful startup on a real T-Internet-COM board;
