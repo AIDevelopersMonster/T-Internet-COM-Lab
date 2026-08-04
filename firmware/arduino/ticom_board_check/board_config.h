@@ -25,6 +25,10 @@ constexpr eth_clock_mode_t ETH_CLK_MODE = ETH_CLOCK_GPIO0_OUT;
 constexpr int RGB_LED_PIN = 12;
 constexpr int RGB_LED_COUNT = 1;
 
+// Bluetooth diagnostics
+constexpr const char *BLUETOOTH_NAME_PREFIX = "TICOM";
+constexpr uint32_t BLE_SCAN_SECONDS = 5;
+
 // Reserved for the future modem stage. No module is installed yet.
 constexpr int MODEM_TX = 33;
 constexpr int MODEM_RX = 35;
