@@ -25,15 +25,16 @@ constexpr eth_clock_mode_t ETH_CLK_MODE = ETH_CLOCK_GPIO0_OUT;
 constexpr int RGB_LED_PIN = 12;
 constexpr int RGB_LED_COUNT = 1;
 
-// Bluetooth diagnostics
+// Bluetooth diagnostics. Bluetooth remains off until a command starts it.
 constexpr const char *BLUETOOTH_NAME_PREFIX = "TICOM";
 constexpr uint32_t BLE_SCAN_SECONDS = 5;
 
-// Reserved for the future modem stage. No module is installed yet.
+// Cellular modem slot. No modem is installed on the validated board yet.
 constexpr int MODEM_TX = 33;
 constexpr int MODEM_RX = 35;
 constexpr int MODEM_PWRKEY = 32;
-constexpr bool MODEM_ENABLED = false;
+constexpr bool MODEM_INSTALLED = false;
+constexpr const char *MODEM_MODEL = "";
 
 constexpr uint32_t SERIAL_BAUD = 115200;
 // Do not use the name RGB_BRIGHTNESS here: Arduino-ESP32 3.x defines it as a macro.
