@@ -4,38 +4,29 @@
 
 Цель проекта — последовательно превратить плату из набора заводских примеров в понятный коммуникационный узел для реальных систем: Ethernet, Wi-Fi, Bluetooth, microSD, локальная диагностика и, позднее, резервный LTE-канал через модемный модуль формата Mini PCIe.
 
-> Текущий этап: **без сотового модема**. Модули находятся в стадии закупки, поэтому код модема пока не активируется и не требуется для сборки.
+> Текущий этап: сотовый модем не установлен. Основная прошивка показывает общий статус модемного слота, но не включает питание и не выполняет AT-опрос.
 
-## Возможности диагностической прошивки
+## Основная диагностическая прошивка
 
-Прошивка `ticom_board_check` поддерживает:
+Скетч `firmware/arduino/ticom_board_check/ticom_board_check.ino` объединяет:
 
-- запуск ESP32 и расширенный вывод сведений о системе;
-- командный интерфейс через USB Serial;
-- RGB-светодиод WS2812 на GPIO 12;
-- Ethernet PHY LAN8720;
-- получение Ethernet-адреса по DHCP;
-- вывод MAC, IP, шлюза, DNS, скорости и duplex;
-- microSD по SPI;
-- просмотр корневого каталога;
-- тест записи, чтения, проверки и удаления файла;
-- сканирование Wi-Fi-сетей;
-- подключение ESP32 к Wi-Fi как станции;
-- безопасное резервирование GPIO модема без попытки его включения.
-
-Отдельный скетч `ticom_bluetooth_check` предназначен для независимой аппаратной проверки:
-
-- Bluetooth MAC и имени устройства;
+- расширенную системную диагностику ESP32;
+- Ethernet LAN8720;
+- Wi-Fi scan/connect/off;
+- microSD status/list/read-write-delete test;
 - Bluetooth Classic SPP;
-- подключения телефона или компьютера к беспроводному последовательному порту;
-- приёма и эхо-возврата данных через Bluetooth Classic;
-- поиска соседних BLE-устройств с выводом имени, адреса и RSSI;
-- корректного выключения Bluetooth между тестами.
+- BLE scan;
+- RGB WS2812;
+- общий статус модемного слота.
+
+Bluetooth по умолчанию выключен и занимает дополнительную память только после команды `BT CLASSIC START` или во время `BLE SCAN`.
+
+Отдельный скетч `firmware/arduino/ticom_bluetooth_check/ticom_bluetooth_check.ino` сохранён как изолированный стенд для повторной проверки Bluetooth без Ethernet, Wi-Fi и microSD.
 
 ## Проверенная конфигурация Arduino IDE
 
-- пакет плат **ESP32 by Espressif Systems 3.3.11**;
-- плата **ESP32 Dev Module**;
+- ESP32 by Espressif Systems **3.3.11**;
+- Board: **ESP32 Dev Module**;
 - CPU Frequency: **240 MHz (WiFi/BT)**;
 - Flash Frequency: **80 MHz**;
 - Flash Mode: **QIO**;
@@ -43,34 +34,41 @@
 - Partition Scheme: **Huge APP (3 MB No OTA / 1 MB SPIFFS)**;
 - PSRAM: **Enabled**;
 - Upload Speed: **921600**;
-- библиотека **Adafruit NeoPixel** для основной диагностической прошивки.
+- библиотека **Adafruit NeoPixel**.
 
-Библиотеки `Network`, `WiFi`, `ETH`, `FS`, `SD`, `SPI`, `BluetoothSerial` и `BLE` входят в пакет Arduino-ESP32 и отдельно не устанавливаются.
+`Network`, `WiFi`, `ETH`, `FS`, `SD`, `SPI`, `BluetoothSerial` и `BLE` входят в Arduino-ESP32.
 
-## Быстрый старт основной диагностики
+## Быстрый старт
 
-1. Откройте `firmware/arduino/ticom_board_check/ticom_board_check.ino` в Arduino IDE.
-2. Установите библиотеку **Adafruit NeoPixel** через Library Manager.
-3. Выберите плату **ESP32 Dev Module**.
-4. Установите параметры из раздела выше.
-5. Загрузите прошивку и откройте Serial Monitor на скорости `115200`.
+1. Откройте `firmware/arduino/ticom_board_check/ticom_board_check.ino`.
+2. Установите **Adafruit NeoPixel**.
+3. Выберите параметры Arduino IDE из раздела выше.
+4. Загрузите прошивку.
+5. Откройте Serial Monitor на `115200`.
 6. Введите `HELP`.
 
-## Команды основной диагностики
+## Команды
 
 ```text
 HELP                         список команд
-STATUS                       полный отчёт состояния
+STATUS                       полный отчёт по всем узлам
 INFO                         расширенная диагностика ESP32
 SYSTEM                       то же, что INFO
 ETH                          состояние Ethernet
 WIFI STATUS                  состояние Wi-Fi
-WIFI SCAN                    поиск доступных Wi-Fi-сетей
+WIFI SCAN                    поиск Wi-Fi-сетей
 WIFI CONNECT <SSID>|<PASS>   подключение к Wi-Fi
 WIFI OFF                     отключение Wi-Fi
 SD                           состояние microSD
-SD LIST                      список файлов в корне карты
+SD LIST                      список файлов в корне
 SD TEST                      запись, чтение, проверка и удаление файла
+BT STATUS                    состояние Bluetooth и MAC
+BT CLASSIC START             запуск Bluetooth Classic SPP
+BT CLASSIC STOP              остановка Bluetooth Classic SPP
+BT SEND <TEXT>               отправка строки SPP-клиенту
+BLE SCAN                     поиск BLE-устройств в течение 5 секунд
+BT OFF                       остановка всех Bluetooth-режимов
+MODEM STATUS                 установлен ли модем и поле модели
 LED RED                      красный
 LED GREEN                    зелёный
 LED BLUE                     синий
@@ -79,100 +77,74 @@ LED OFF                      выключить RGB
 REBOOT                       перезагрузить ESP32
 ```
 
-Пример подключения к защищённой сети:
+Пример Wi-Fi:
 
 ```text
 WIFI CONNECT MyNetwork|MyPassword
 ```
 
-Для открытой сети пароль оставляется пустым:
+Пример Bluetooth Classic:
 
 ```text
-WIFI CONNECT OpenNetwork|
+BT CLASSIC START
+BT SEND Hello from T-Internet-COM
 ```
 
-Пароль вводится через Serial Monitor открытым текстом и может остаться в истории терминала. Команда предназначена для лабораторной проверки, а не для постоянного хранения учётных данных.
+В Windows используется исходящий COM-порт сервиса `ESP32SPP`. После открытия порта обмен двунаправленный: данные с компьютера выводятся в USB Serial и возвращаются эхом, а `BT SEND` передаёт строку с ESP32 на компьютер.
 
-## Проверка Bluetooth
+## Модем
 
-Откройте:
+Пока в проверенной плате модем отсутствует:
 
 ```text
-firmware/arduino/ticom_bluetooth_check/ticom_bluetooth_check.ino
+Module installed: no
+Model: unavailable
 ```
 
-Загрузите скетч и откройте Serial Monitor на `115200`.
+В `board_config.h` предусмотрены:
 
-Команды:
-
-```text
-HELP               список команд
-BT STATUS          Bluetooth MAC и состояние режимов
-BT CLASSIC START   запуск Bluetooth Classic SPP
-BT CLASSIC STOP    остановка Bluetooth Classic SPP
-BLE SCAN           поиск соседних BLE-устройств в течение 5 секунд
-BT OFF             остановка всех Bluetooth-режимов
-REBOOT             перезагрузка ESP32
+```cpp
+constexpr bool MODEM_INSTALLED = false;
+constexpr const char *MODEM_MODEL = "";
 ```
 
-После `BT CLASSIC START` устройство появляется под именем вида:
-
-```text
-TICOM-EBF2
-```
-
-Последние четыре символа формируются из Bluetooth MAC конкретной платы. После сопряжения данные, отправленные на Bluetooth-порт, отображаются в USB Serial Monitor и возвращаются отправителю как эхо.
-
-Команда `BLE SCAN` перед запуском останавливает Classic SPP, выполняет активное сканирование, выводит обнаруженные устройства и затем освобождает BLE-стек. Это уменьшает вероятность конфликтов при последовательной проверке двух Bluetooth-режимов.
+После установки модуля сначала будет добавлен безопасный AT-опрос. Марка и модель появятся только если модем реально ответит на стандартные команды вроде `ATI`, `AT+CGMM` или эквивалентные. До аппаратной проверки прошивка ничего не угадывает.
 
 ## Подтверждённые аппаратные испытания
 
 На реальной плате подтверждены:
 
-- загрузка ESP32;
-- работа PSRAM;
-- работа Serial CLI;
-- расширенная системная диагностика;
-- запуск LAN8720;
-- Ethernet 100 Mbps Full Duplex;
-- DHCP, шлюз и DNS;
-- microSD объёмом около 32 ГБ;
-- чтение корневого каталога карты;
-- запись, чтение, проверка и удаление тестового файла;
-- сканирование Wi-Fi-сетей;
+- ESP32, PSRAM и системная диагностика;
+- Ethernet 100 Mbps Full Duplex, DHCP, шлюз и DNS;
+- microSD около 32 ГБ и полный цикл записи/чтения/удаления;
+- Wi-Fi scan;
+- Bluetooth Classic SPP через Windows COM-порт;
+- двунаправленная передача и эхо;
+- команда `BT SEND`;
+- BLE scan;
 - запуск без установленного модема.
 
-Bluetooth пока требует аппаратной проверки на реальной плате.
-
-Фактические результаты сохраняются в `docs/TEST_LOG.md`.
+Фактические результаты находятся в `docs/TEST_LOG.md`.
 
 ## Структура
 
 ```text
-firmware/arduino/ticom_board_check/      основная диагностическая прошивка
-firmware/arduino/ticom_bluetooth_check/  отдельная проверка Classic SPP и BLE
-docs/PINMAP.md                           используемая распиновка
-docs/ROADMAP.md                          этапы развития проекта
-docs/MECHANICAL_MOUNTING.md              варианты крепления без отверстий
-docs/TEST_LOG.md                         журнал реальных испытаний
-hardware/enclosure/README.md             требования к будущему держателю
+firmware/arduino/ticom_board_check/      общая диагностическая прошивка
+firmware/arduino/ticom_bluetooth_check/  отдельный Bluetooth-стенд
+docs/PINMAP.md                           распиновка
+docs/ROADMAP.md                          план развития
+docs/TEST_LOG.md                         журнал испытаний
+hardware/enclosure/README.md             требования к держателю
 ```
-
-## Важное ограничение платы
-
-На основной плате нет удобных монтажных отверстий. Для реального изделия её нельзя оставлять свободно лежащей в корпусе или удерживать только кабелями. Проект предусматривает отдельную рамку или основание с боковыми защёлками, опорными площадками под платой и разгрузкой разъёмов.
 
 ## План развития
 
-1. подтвердить Bluetooth Classic SPP и BLE Scan на реальной плате;
-2. подключить ESP32 к Wi-Fi-точке доступа;
-3. журналировать события Ethernet и Wi-Fi на microSD;
-4. добавить локальную диагностическую веб-страницу с вкладками;
-5. перенести подтверждённые Bluetooth-функции в общую прошивку и GUI;
-6. контролировать доступность основного сервера;
-7. подключить сотовый модем после его получения;
-8. реализовать переключение Ethernet → Wi-Fi → LTE;
-9. добавить RS-485 и защищённое питание.
+1. проверить общую прошивку после интеграции Bluetooth;
+2. журналировать события на microSD;
+3. добавить локальный веб-интерфейс с вкладками;
+4. добавить безопасное обнаружение модема и чтение его модели;
+5. реализовать переключение Ethernet → Wi-Fi → LTE;
+6. добавить RS-485 и защищённое питание.
 
 ## Лицензия
 
